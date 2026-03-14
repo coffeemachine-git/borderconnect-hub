@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { mockOcrExtract, Traveler } from "@/data/mockData";
+import { Traveler } from "@/data/mockData";
 import { useTravelers } from "@/context/TravelerContext";
 import { Button } from "@/components/ui/button";
-import { Loader2, CheckCircle, Camera, CameraOff, ScanLine } from "lucide-react";
+import { Loader2, CheckCircle, Camera, CameraOff, ScanLine, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
@@ -10,20 +10,27 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
   const [cameraActive, setCameraActive] = useState(false);
   const [result, setResult] = useState<Partial<Traveler> | null>(null);
   const { addTraveler } = useTravelers();
+  
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null); // Added for capturing frames
   const streamRef = useRef<MediaStream | null>(null);
 
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { 
+          facingMode: "environment", 
+          width: { ideal: 1920 }, // Higher res for better OCR
+          height: { ideal: 1080 } 
+        },
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
       setCameraActive(true);
-    } catch {
+      setResult(null);
+    } catch (err) {
       toast.error("Unable to access camera. Please grant permission.");
     }
   }, []);
@@ -38,19 +45,42 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
   useEffect(() => () => stopCamera(), [stopCamera]);
 
   const handleCaptureScan = async () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !canvasRef.current) return;
+    
     setScanning(true);
-    try {
-      // Simulate OCR extraction using mock data
-      const data = await mockOcrExtract();
-      setResult(data);
-      toast.success("MRZ Data Extracted successfully");
-    } catch (error) {
-      console.error("OCR Error:", error);
-      toast.error("OCR extraction failed. Please try again.");
-    } finally {
-      setScanning(false);
-      stopCamera();
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // Set canvas size to match video resolution
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Draw current video frame to canvas
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL("image/jpeg", 0.9);
+
+      try {
+        // ACTUAL BACKEND INTEGRATION
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/ocr/scan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: imageData }),
+        });
+
+        if (!response.ok) throw new Error("Backend failed to process image");
+
+        const data = await response.json();
+        setResult(data);
+        toast.success("Passport data extracted!");
+        stopCamera();
+      } catch (error) {
+        console.error("OCR Error:", error);
+        toast.error("Failed to read document. Ensure lighting is good and MRZ is visible.");
+      } finally {
+        setScanning(false);
+      }
     }
   };
 
@@ -58,89 +88,109 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
     if (!result) return;
     const newTraveler: Traveler = {
       id: `t-${Date.now()}`,
-      firstName: result.firstName ?? "Unknown",
-      lastName: result.lastName ?? "Unknown",
-      nationality: result.nationality ?? "Unknown",
-      documentType: result.documentType ?? "travel_document",
-      documentNumber: result.documentNumber ?? "N/A",
-      dateOfBirth: result.dateOfBirth ?? "1990-01-01",
-      arrivalDate: result.arrivalDate ?? new Date().toISOString().split("T")[0],
-      arrivalTime: result.arrivalTime ?? "00:00",
+      firstName: result.firstName || "Unknown",
+      lastName: result.lastName || "Unknown",
+      nationality: result.nationality || "Unknown",
+      documentType: result.documentType || "passport",
+      documentNumber: result.documentNumber || "N/A",
+      dateOfBirth: result.dateOfBirth || "",
+      arrivalDate: new Date().toISOString().split("T")[0],
+      arrivalTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       visaStatus: "pending",
       watchlistStatus: "clear",
       backgroundCheckResult: "pending",
-      aidNeeds: ["none"],
+      aidNeeds: [],
       familySize: 1,
       unaccompaniedMinor: false,
       ocrScanned: true,
       mrzData: result.mrzData,
     };
+    
     addTraveler(newTraveler);
-    toast.success("Traveler profile created from OCR scan");
+    toast.success("Traveler profile created");
     onComplete();
   };
 
   return (
     <div className="space-y-4">
-      {/* Camera viewfinder */}
-      <div className="relative rounded-lg overflow-hidden bg-muted/30 border-2 border-dashed aspect-video flex items-center justify-center">
+      {/* Hidden canvas for processing */}
+      <canvas ref={canvasRef} className="hidden" />
+
+      <div className="relative rounded-lg overflow-hidden bg-black aspect-video flex items-center justify-center border-2 border-primary/20">
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className={`absolute inset-0 w-full h-full object-cover ${cameraActive ? "block" : "hidden"}`}
+          className={`absolute inset-0 w-full h-full object-cover ${cameraActive ? "opacity-100" : "opacity-0"}`}
         />
+        
         {cameraActive && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-[80%] h-[40%] border-2 border-primary/70 rounded-md" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            {/* Guidance Overlay */}
+            <div className="w-[90%] h-[30%] border-2 border-white/50 rounded-lg bg-primary/5 relative">
+                <div className="absolute -top-6 left-0 text-[10px] text-white bg-primary px-2 py-0.5 rounded">ALIGN MRZ (BOTTOM OF PASSPORT) HERE</div>
+                <div className="absolute inset-0 border-2 border-dashed border-primary/40 animate-pulse" />
+            </div>
           </div>
         )}
+
         {!cameraActive && !result && (
-          <div className="text-center p-6">
-            <CameraOff className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">Camera inactive — tap below to start</p>
+          <div className="text-center p-6 text-white">
+            <CameraOff className="h-10 w-10 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">Ready to scan document</p>
           </div>
         )}
       </div>
 
-      {/* Controls */}
-      {!cameraActive && !result && (
-        <Button onClick={startCamera} className="w-full">
-          <Camera className="h-4 w-4 mr-2" />
-          Open Camera
-        </Button>
-      )}
-
-      {cameraActive && (
-        <div className="flex gap-2">
-          <Button onClick={handleCaptureScan} disabled={scanning} className="flex-1">
-            {scanning ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Scanning MRZ…</>
-            ) : (
-              <><ScanLine className="h-4 w-4 mr-2" />Capture &amp; Scan</>
-            )}
+      <div className="flex gap-2">
+        {!cameraActive ? (
+          <Button onClick={startCamera} className="w-full" variant={result ? "outline" : "default"}>
+            <Camera className="h-4 w-4 mr-2" />
+            {result ? "Rescan Document" : "Start Scanner"}
           </Button>
-          <Button variant="outline" onClick={stopCamera} disabled={scanning}>
-            Stop
-          </Button>
-        </div>
-      )}
+        ) : (
+          <>
+            <Button onClick={handleCaptureScan} disabled={scanning} className="flex-1">
+              {scanning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ScanLine className="h-4 w-4 mr-2" />}
+              {scanning ? "Processing..." : "Capture & Scan"}
+            </Button>
+            <Button variant="ghost" onClick={stopCamera} disabled={scanning}>Cancel</Button>
+          </>
+        )}
+      </div>
 
-      {/* Result */}
       {result && (
-        <div className="border rounded-lg p-4 space-y-3 bg-card">
-          <div className="flex items-center gap-2 text-success text-sm font-semibold">
-            <CheckCircle className="h-4 w-4" /> MRZ Data Extracted
+        <div className="border rounded-lg p-4 space-y-3 bg-card animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-green-600 text-sm font-semibold">
+              <CheckCircle className="h-4 w-4" /> Data Verified
+            </div>
+            <span className="text-[10px] font-mono bg-muted px-2 py-1 rounded">Confidence: High</span>
           </div>
-          <div className="font-mono text-xs bg-muted p-2 rounded break-all">{result.mrzData}</div>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><span className="text-muted-foreground">Name:</span> {result.firstName} {result.lastName}</div>
-            <div><span className="text-muted-foreground">Nationality:</span> {result.nationality}</div>
-            <div><span className="text-muted-foreground">Document:</span> {result.documentNumber}</div>
-            <div><span className="text-muted-foreground">DOB:</span> {result.dateOfBirth}</div>
+          
+          <div className="grid grid-cols-2 gap-4 text-sm border-t pt-3">
+            <div>
+              <p className="text-[10px] uppercase text-muted-foreground font-bold">Full Name</p>
+              <p>{result.firstName} {result.lastName}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-muted-foreground font-bold">Document #</p>
+              <p className="font-mono">{result.documentNumber}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-muted-foreground font-bold">Nationality</p>
+              <p>{result.nationality}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-muted-foreground font-bold">DOB</p>
+              <p>{result.dateOfBirth}</p>
+            </div>
           </div>
-          <Button onClick={handleSave} className="w-full">Save Traveler Profile</Button>
+          
+          <Button onClick={handleSave} className="w-full bg-green-600 hover:bg-green-700">
+            Confirm & Save to Hub
+          </Button>
         </div>
       )}
     </div>
