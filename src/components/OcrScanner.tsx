@@ -14,11 +14,7 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
   const { addTraveler } = useTravelers();
   
   const videoRef = useRef<HTMLVideoElement>(null);
-<<<<<<< HEAD
   const canvasRef = useRef<HTMLCanvasElement>(null); // Added for capturing frames
-=======
-  const canvasRef = useRef<HTMLCanvasElement>(null);
->>>>>>> c763641c0746a564fd7594d3f7dfcd0990f9a132
   const streamRef = useRef<MediaStream | null>(null);
 
   const startCamera = useCallback(async () => {
@@ -70,83 +66,81 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
     return new Blob([arrayBuffer], { type: "image/jpeg" });
   };
 
-  const handleCaptureScan = async () => {
+const handleCaptureScan = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     
     setScanning(true);
-<<<<<<< HEAD
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    // Set canvas size to match video resolution
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // 1. Calculate the exact dimensions of your UI crop box
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
     
-    // Draw current video frame to canvas
+    const cropWidth = videoWidth * 0.9;  // 90% of video width
+    const cropHeight = videoHeight * 0.3; // 30% of video height
+    const cropX = (videoWidth - cropWidth) / 2; // Center horizontally
+    const cropY = (videoHeight - cropHeight) / 2; // Center vertically
+
+    // 2. Shrink the canvas to ONLY match the crop box size
+    canvas.width = cropWidth;
+    canvas.height = cropHeight;
+    
     const context = canvas.getContext("2d");
     if (context) {
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = canvas.toDataURL("image/jpeg", 0.9);
+      // 3. Draw ONLY the cropped rectangle from the video onto the canvas
+      context.drawImage(
+        video, 
+        cropX, cropY, cropWidth, cropHeight, // Source coordinates (the crop box)
+        0, 0, cropWidth, cropHeight          // Destination coordinates (the canvas)
+      );
+      
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          toast.error("Failed to capture image.");
+          setScanning(false);
+          return;
+        }
 
-      try {
-        // ACTUAL BACKEND INTEGRATION
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/ocr/scan`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: imageData }),
-        });
+        const formData = new FormData();
+        formData.append("documentImage", blob, "scan.jpg");
 
-        if (!response.ok) throw new Error("Backend failed to process image");
+        try {
+          const response = await fetch("http://localhost:5000/api/scan", {
+            method: "POST",
+            body: formData,
+          });
 
-        const data = await response.json();
-        setResult(data);
-        toast.success("Passport data extracted!");
-        stopCamera();
-      } catch (error) {
-        console.error("OCR Error:", error);
-        toast.error("Failed to read document. Ensure lighting is good and MRZ is visible.");
-      } finally {
-        setScanning(false);
-      }
-=======
-    try {
-      const imageBlob = captureFrame();
-      if (!imageBlob) throw new Error("Failed to capture frame");
+          if (!response.ok) throw new Error("Backend failed to process image");
 
-      const formData = new FormData();
-      formData.append("file", imageBlob, "capture.jpg");
+          const responseData = await response.json();
+          
+          if (responseData.data && responseData.data.documentType === 'Passport') {
+            const parsed = responseData.data.parsedData;
+            const nameParts = parsed.fullName.split(' ');
+            
+            setResult({
+              firstName: nameParts.length > 0 ? nameParts[0] : '',
+              lastName: nameParts.length > 1 ? nameParts.slice(1).join(' ') : '',
+              nationality: parsed.nationality,
+              documentType: responseData.data.documentType,
+              documentNumber: parsed.documentId,
+              mrzData: responseData.data.extractedText
+            });
+            
+            toast.success("Passport data extracted!");
+            stopCamera();
+          } else {
+            throw new Error("Could not parse MRZ");
+          }
 
-      const response = await fetch(BACKEND_URL, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Backend error (${response.status}): ${err}`);
-      }
-
-      const data = await response.json();
-      setResult({
-        firstName: data.first_name ?? data.firstName ?? "Unknown",
-        lastName: data.last_name ?? data.lastName ?? "Unknown",
-        nationality: data.nationality ?? "Unknown",
-        documentType: data.document_type ?? data.documentType ?? "travel_document",
-        documentNumber: data.document_number ?? data.documentNumber ?? "N/A",
-        dateOfBirth: data.date_of_birth ?? data.dateOfBirth ?? "1990-01-01",
-        arrivalDate: new Date().toISOString().split("T")[0],
-        arrivalTime: new Date().toTimeString().slice(0, 5),
-        mrzData: data.mrz_data ?? data.mrzData ?? data.mrz ?? "",
-        ocrScanned: true,
-      });
-      toast.success("MRZ Data Extracted successfully");
-    } catch (error) {
-      console.error("OCR Error:", error);
-      toast.error(error instanceof Error ? error.message : "OCR extraction failed. Is the backend running?");
-    } finally {
-      setScanning(false);
-      stopCamera();
->>>>>>> c763641c0746a564fd7594d3f7dfcd0990f9a132
+        } catch (error) {
+          console.error("OCR Error:", error);
+          toast.error("Failed to read document. Ensure lighting is good and MRZ is visible.");
+        } finally {
+          setScanning(false);
+        }
+      }, "image/jpeg", 0.9);
     }
   };
 
@@ -234,7 +228,6 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
             </div>
             <span className="text-[10px] font-mono bg-muted px-2 py-1 rounded">Confidence: High</span>
           </div>
-<<<<<<< HEAD
           
           <div className="grid grid-cols-2 gap-4 text-sm border-t pt-3">
             <div>
@@ -253,16 +246,6 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
               <p className="text-[10px] uppercase text-muted-foreground font-bold">DOB</p>
               <p>{result.dateOfBirth}</p>
             </div>
-=======
-          {result.mrzData && (
-            <div className="font-mono text-xs bg-muted p-2 rounded break-all">{result.mrzData}</div>
-          )}
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><span className="text-muted-foreground">Name:</span> {result.firstName} {result.lastName}</div>
-            <div><span className="text-muted-foreground">Nationality:</span> {result.nationality}</div>
-            <div><span className="text-muted-foreground">Document:</span> {result.documentNumber}</div>
-            <div><span className="text-muted-foreground">DOB:</span> {result.dateOfBirth}</div>
->>>>>>> c763641c0746a564fd7594d3f7dfcd0990f9a132
           </div>
           
           <Button onClick={handleSave} className="w-full bg-green-600 hover:bg-green-700">
