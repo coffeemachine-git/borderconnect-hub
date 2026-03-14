@@ -1,9 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { mockOcrExtract, Traveler } from "@/data/mockData";
+import { Traveler } from "@/data/mockData";
 import { useTravelers } from "@/context/TravelerContext";
 import { Button } from "@/components/ui/button";
 import { Loader2, CheckCircle, Camera, CameraOff, ScanLine } from "lucide-react";
 import { toast } from "sonner";
+
+const BACKEND_URL = "http://localhost:8000/api/process-passport";
 
 export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
   const [scanning, setScanning] = useState(false);
@@ -11,6 +13,7 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
   const [result, setResult] = useState<Partial<Traveler> | null>(null);
   const { addTraveler } = useTravelers();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const startCamera = useCallback(async () => {
@@ -37,17 +40,63 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
 
   useEffect(() => () => stopCamera(), [stopCamera]);
 
+  const captureFrame = (): Blob | null => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return null;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    // Convert to blob synchronously via dataURL
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    const byteString = atob(dataUrl.split(",")[1]);
+    const arrayBuffer = new ArrayBuffer(byteString.length);
+    const uint8 = new Uint8Array(arrayBuffer);
+    for (let i = 0; i < byteString.length; i++) {
+      uint8[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([arrayBuffer], { type: "image/jpeg" });
+  };
+
   const handleCaptureScan = async () => {
     if (!videoRef.current) return;
     setScanning(true);
     try {
-      // Simulate OCR extraction using mock data
-      const data = await mockOcrExtract();
-      setResult(data);
+      const imageBlob = captureFrame();
+      if (!imageBlob) throw new Error("Failed to capture frame");
+
+      const formData = new FormData();
+      formData.append("file", imageBlob, "capture.jpg");
+
+      const response = await fetch(BACKEND_URL, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`Backend error (${response.status}): ${err}`);
+      }
+
+      const data = await response.json();
+      setResult({
+        firstName: data.first_name ?? data.firstName ?? "Unknown",
+        lastName: data.last_name ?? data.lastName ?? "Unknown",
+        nationality: data.nationality ?? "Unknown",
+        documentType: data.document_type ?? data.documentType ?? "travel_document",
+        documentNumber: data.document_number ?? data.documentNumber ?? "N/A",
+        dateOfBirth: data.date_of_birth ?? data.dateOfBirth ?? "1990-01-01",
+        arrivalDate: new Date().toISOString().split("T")[0],
+        arrivalTime: new Date().toTimeString().slice(0, 5),
+        mrzData: data.mrz_data ?? data.mrzData ?? data.mrz ?? "",
+        ocrScanned: true,
+      });
       toast.success("MRZ Data Extracted successfully");
     } catch (error) {
       console.error("OCR Error:", error);
-      toast.error("OCR extraction failed. Please try again.");
+      toast.error(error instanceof Error ? error.message : "OCR extraction failed. Is the backend running?");
     } finally {
       setScanning(false);
       stopCamera();
@@ -82,6 +131,9 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
 
   return (
     <div className="space-y-4">
+      {/* Hidden canvas for frame capture */}
+      <canvas ref={canvasRef} className="hidden" />
+
       {/* Camera viewfinder */}
       <div className="relative rounded-lg overflow-hidden bg-muted/30 border-2 border-dashed aspect-video flex items-center justify-center">
         <video
@@ -133,7 +185,9 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
           <div className="flex items-center gap-2 text-success text-sm font-semibold">
             <CheckCircle className="h-4 w-4" /> MRZ Data Extracted
           </div>
-          <div className="font-mono text-xs bg-muted p-2 rounded break-all">{result.mrzData}</div>
+          {result.mrzData && (
+            <div className="font-mono text-xs bg-muted p-2 rounded break-all">{result.mrzData}</div>
+          )}
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div><span className="text-muted-foreground">Name:</span> {result.firstName} {result.lastName}</div>
             <div><span className="text-muted-foreground">Nationality:</span> {result.nationality}</div>
