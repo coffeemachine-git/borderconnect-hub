@@ -38,54 +38,21 @@ export default function OcrScanner({ onComplete }: { onComplete: () => void }) {
   useEffect(() => () => stopCamera(), [stopCamera]);
 
   const handleCaptureScan = async () => {
-    if (!videoRef.current) return;
-    setScanning(true);
-
-    // 1. Create a hidden canvas to grab the current video frame
-    const canvas = document.createElement("canvas");
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext("2d");
-    
-    if (!ctx) {
-      toast.error("Failed to capture image.");
-      setScanning(false);
-      return;
-    }
-    
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-
-    // 2. Convert the captured frame to a Base64 string
-    const imageBase64 = canvas.toDataURL("image/jpeg");
-
-    try {
-      // 3. Send the image to your Python Backend
-      // Make sure to replace this URL with your actual backend endpoint
-      const response = await fetch("http://localhost:8000/api/process-passport", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ image: imageBase64 }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Backend processing failed");
-      }
-
-      // 4. Receive the extracted JSON profile and set it to state
-      const data = await response.json();
-      setResult(data); // This is your Name, DOB, Passport Number
-      toast.success("MRZ Data Extracted successfully");
-
-    } catch (error) {
-      console.error("OCR Error:", error);
-      toast.error("OCR extraction failed. Please try again.");
-    } finally {
-      setScanning(false);
-      stopCamera();
-    }
-  };
+    if (!videoRef.current) return;
+    setScanning(true);
+    try {
+      // Simulate OCR extraction using mock data
+      const data = await mockOcrExtract();
+      setResult(data);
+      toast.success("MRZ Data Extracted successfully");
+    } catch (error) {
+      console.error("OCR Error:", error);
+      toast.error("OCR extraction failed. Please try again.");
+    } finally {
+      setScanning(false);
+      stopCamera();
+    }
+  };
 
   const handleSave = () => {
     if (!result) return;
